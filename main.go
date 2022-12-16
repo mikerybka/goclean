@@ -162,7 +162,7 @@ func main() {
 		return
 	}
 
-	renameFiles()
+	deleteFiles()
 
 	entry, err := os.ReadDir(tmpDir)
 	if err != nil {
@@ -226,6 +226,25 @@ func renameFiles() {
 		}
 		if strings.HasSuffix(name, ".go") {
 			err = os.Rename(name, name+".bak")
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
+func deleteFiles() {
+	entry, err := os.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, info := range entry {
+		name := info.Name()
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if strings.HasSuffix(name, ".go") {
+			err = os.Remove(name)
 			if err != nil {
 				panic(err)
 			}
