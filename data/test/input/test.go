@@ -24,17 +24,3 @@ type sup struct {
 	// More
 	Time string //nolint
 } //nolint
-
-// lfalsdjfl
-func (s *sup) f() {
-	s.Time = "hi"
-}
-
-// more
-func g() {
-	// dklfas
-	var b sup
-	b.Time = "hi"
-	// Test comment
-
-}

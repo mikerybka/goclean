@@ -6,12 +6,25 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
 )
+
+var goimports string
+
+func init() {
+	var err error
+	goimports, err = exec.LookPath("goimports")
+	if err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
+}
 
 func main() {
 	fset := token.NewFileSet()
@@ -56,6 +69,19 @@ func main() {
 			for _, decl := range file.Decls {
 				switch decl := decl.(type) {
 				case *ast.FuncDecl:
+					// Skip type methods.
+					if decl.Recv != nil {
+						continue
+					}
+					filename := filepath.Join(tmpDir, goFilename(decl.Name.Name))
+					f, err := os.Create(filename)
+					if err != nil {
+						fmt.Println("Error:", err)
+						return
+					}
+					defer f.Close()
+					fmt.Fprintf(f, header)
+					printer.Fprint(f, fset, decl)
 				case *ast.GenDecl:
 					for _, spec := range decl.Specs {
 						switch spec := spec.(type) {
@@ -69,6 +95,8 @@ func main() {
 								}
 								defer f.Close()
 								fmt.Fprintf(f, header)
+								writeCommentGroup(f, decl.Doc)
+								writeCommentGroup(f, spec.Doc)
 								switch decl.Tok {
 								case token.CONST:
 									fmt.Fprintf(f, "const ")
@@ -82,25 +110,60 @@ func main() {
 									fmt.Fprintf(f, " = ")
 									printer.Fprint(f, fset, spec.Values[i])
 								}
-								fmt.Fprintf(f, "\n")
+								writeCommentGroup(f, spec.Comment)
 							}
 						case *ast.TypeSpec:
+							filename := filepath.Join(tmpDir, goFilename(spec.Name.Name))
+							f, err := os.Create(filename)
+							if err != nil {
+								fmt.Println("Error:", err)
+								return
+							}
+							defer f.Close()
+							fmt.Fprintf(f, header)
+							writeCommentGroup(f, decl.Doc)
+							writeCommentGroup(f, spec.Doc)
+							fmt.Fprintf(f, "type ")
+							printer.Fprint(f, fset, spec.Name)
+							fmt.Fprintf(f, " ")
+							printer.Fprint(f, fset, spec.Type)
+							writeCommentGroup(f, spec.Comment)
 						}
 					}
 				}
 			}
 		}
 		// Process the files again just for the methods.
-		// for _, file := range pkg.Files {
-		// 	for _, decl := range file.Decls {
-		// 		switch decl := decl.(type) {
-		// 		case *ast.FuncDecl:
-		// 		}
-		// 	}
-		// }
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				switch decl := decl.(type) {
+				case *ast.FuncDecl:
+					// Skip non-methods.
+					if decl.Recv == nil {
+						continue
+					}
+					filename := filepath.Join(tmpDir, goFilename(getTypeName(decl.Recv.List[0].Type)))
+					f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+					if err != nil {
+						fmt.Println("Error:", err)
+						return
+					}
+					defer f.Close()
+					fmt.Fprintf(f, "\n")
+					printer.Fprint(f, fset, decl)
+				}
+			}
+		}
 	}
 
-	// TODO: copy the files from tmpDir to the current directory.
+	err = exec.Command("goimports", "-w", tmpDir).Run()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	renameFiles()
+
 	entry, err := os.ReadDir(tmpDir)
 	if err != nil {
 		panic(err)
@@ -110,13 +173,11 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		err = os.WriteFile(filepath.Join("..", "test2", info.Name()), b, 0644)
+		err = os.WriteFile(info.Name(), b, 0644)
 		if err != nil {
 			panic(err)
 		}
 	}
-
-	// TODO: run gofmt on the result.
 }
 
 func filter(info fs.FileInfo) bool {
@@ -132,4 +193,42 @@ func goFilename(name string) string {
 		buf.WriteRune(unicode.ToLower(r))
 	}
 	return buf.String() + ".go"
+}
+
+func writeCommentGroup(w io.Writer, comments *ast.CommentGroup) {
+	if comments != nil {
+		for _, comment := range comments.List {
+			fmt.Fprintf(w, "%s\n", comment.Text)
+		}
+	}
+}
+
+func getTypeName(expr ast.Expr) string {
+	switch expr := expr.(type) {
+	case *ast.Ident:
+		return expr.Name
+	case *ast.StarExpr:
+		return getTypeName(expr.X)
+	default:
+		panic(fmt.Sprintf("unhandled type: %T", expr))
+	}
+}
+
+func renameFiles() {
+	entry, err := os.ReadDir(".")
+	if err != nil {
+		panic(err)
+	}
+	for _, info := range entry {
+		name := info.Name()
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if strings.HasSuffix(name, ".go") {
+			err = os.Rename(name, name+".bak")
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
 }
