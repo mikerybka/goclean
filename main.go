@@ -138,7 +138,6 @@ func main() {
 			for _, decl := range file.Decls {
 				switch decl := decl.(type) {
 				case *ast.FuncDecl:
-					// Skip non-methods.
 					if decl.Recv == nil {
 						continue
 					}
@@ -151,6 +150,7 @@ func main() {
 					defer f.Close()
 					fmt.Fprintf(f, "\n")
 					printer.Fprint(f, fset, decl)
+					fmt.Fprintf(f, "\n")
 				}
 			}
 		}
